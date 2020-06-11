@@ -134,9 +134,10 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
                 hash_table[hash] = std::min<uint8_t>(126u, hash_table[hash] + 1);
         }
 
-        // The filesize is multiplied by two, because Mantis filesize is based on fastq files, we use fasta files,
+        // The filesize is multiplied by two, because Mantis' filesize is based on fastq files, while we use fasta files,
         // which are smaller because the quality information is missing. A multiplication of 2 should return roughly
-        // the size of the fastq file.
+        // the size of the fastq file. Note: Because Mantis cutoffs are based on gzipped files, this estimation makes
+        // only sense when gzipped fasta files are used.
         filesize = std::filesystem::file_size(file) * 2;
 
         for (size_t k = 0; k < cutoff_bounds.size(); ++k)
