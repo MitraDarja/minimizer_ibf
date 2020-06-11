@@ -111,8 +111,10 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
     std::ofstream headerfile;
     uint64_t count{0};
     uint64_t filesize{0};
-    uint16_t cutoff{50};
+    uint16_t cutoff{50}; // Default cutoff.
     // Cutoffs and bounds from Mantis
+    // Mantis ignores k-mers which appear less than a certain cutoff. The cutoff is based on the file size of a
+    // fastq gzipped file. So small files have only a cutoff of 1, while big files have a cutoff value of 50.
     std::vector<int> cutoffs{1,3,10,20};
     std::vector<uint64_t> cutoff_bounds{314572800, 524288000, 1073741824, 3221225472};
 
@@ -126,10 +128,15 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
         {
             mini.compute(seq);
             for (auto && hash : mini.minimizer_hash)
+                // The hash table stores how often a minimizer appears. It does not matter if a minimizer appears
+                // 50 times or 2000 times, it is stored regardless because the biggest cutoff value is 50, therefore
+                // the hash table stores only values up until 126 to save memory.
                 hash_table[hash] = std::min<uint8_t>(126u, hash_table[hash] + 1);
         }
 
-        // Filesize multiplied by two, because Mantis based on fastq files, we use fasta files
+        // The filesize is multiplied by two, because Mantis filesize is based on fastq files, we use fasta files,
+        // which are smaller because the quality information is missing. A multiplication of 2 should return roughly
+        // the size of the fastq file.
         filesize = std::filesystem::file_size(file) * 2;
 
         for (size_t k = 0; k < cutoff_bounds.size(); ++k)
@@ -141,6 +148,7 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
             }
         }
 
+        // Store binary file
         outfile.open(std::string(out_path) + std::string(file.stem()) + ".minimizer", std::ios::binary);
         for (auto & hash : hash_table)
         {
@@ -152,9 +160,11 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
         }
         outfile.close();
 
+        // Store header file
         headerfile.open(std::string(out_path) + std::string(file.stem()) + ".header");
         headerfile << static_cast<uint64_t>(n_k) << "\t" << n_w << "\t" << cutoff << "\t" << count << "\n";
         headerfile.close();
+
         count = 0;
         cutoff = 50;
         hash_table.clear();
