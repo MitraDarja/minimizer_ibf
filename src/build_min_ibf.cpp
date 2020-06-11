@@ -7,23 +7,35 @@
 #include <iostream>
 #include <minimizer.hpp>
 
+struct cmd_arguments
+{
+    std::vector<std::filesystem::path> bin_path{};
+    std::filesystem::path out_path{"./"};
+    uint64_t w{23};
+    uint8_t k{20};
+    uint64_t bins{64};
+    uint64_t bits{4096};
+    uint64_t hash{2};
+    bool gz{false};
+    bool bz2{false};
+    bool binary{false};
+    bool precalculated{false};
+};
 
 struct my_traits : seqan3::sequence_file_input_default_traits_dna
 {
     using sequence_alphabet = seqan3::dna4;
 };
 
-template <class IBFType>
-void fill_ibf(IBFType & ibf,
+void fill_ibf(seqan3::interleaved_bloom_filter<seqan3::data_layout::uncompressed> & ibf,
               std::vector<std::filesystem::path> const & dir_path,
               uint8_t const n_k,
               uint64_t const n_w,
-              uint64_t const n_bins,
               std::string const & extension)
 {
     minimizer mini{window{n_w}, kmer{n_k}};
 
-    for (uint64_t cur_bin = 0; cur_bin < n_bins; ++cur_bin)
+    for (uint64_t cur_bin = 0; cur_bin < ibf.bin_count(); ++cur_bin)
     {
         std::filesystem::path bin_path{dir_path[0]};
         bin_path /= ("bin_" + std::to_string(cur_bin) + extension);
@@ -39,9 +51,8 @@ void fill_ibf(IBFType & ibf,
     }
 }
 
-// Use, when minimisers were precalculated and can be found in a binary file for each experiment
-template <class IBFType>
-void fill_ibf(IBFType & ibf,
+// Reads precomputed minimisers from binary files.
+void fill_ibf(seqan3::interleaved_bloom_filter<seqan3::data_layout::uncompressed> & ibf,
               std::vector<std::filesystem::path> const & in_path)
 {
     std::ifstream infile;
@@ -49,44 +60,43 @@ void fill_ibf(IBFType & ibf,
     for (uint64_t cur_bin = 0; cur_bin < in_path.size(); ++cur_bin)
     {
         infile.open(in_path[cur_bin], std::ios::binary);
-        if (!infile.is_open()) {
-               std::cerr << "Error in open file.\n";
-               break;
+
+        if (!infile.is_open())
+        {
+            throw std::filesystem::filesystem_error("File not found!",
+                                                    in_path[cur_bin],
+                                                    std::make_error_code(std::errc::bad_file_descriptor));
         }
+
         uint64_t num;
-        while(infile.read((char*)&num, sizeof(num)))
+        while(infile.read(reinterpret_cast<char*>(&num), sizeof(num)))
             ibf.emplace(num, seqan3::bin_index{cur_bin});
+
         infile.close();
     }
 }
 
-void run_program(std::vector<std::filesystem::path> const & dir_path,
-                 std::filesystem::path const & out_path,
-                 uint8_t const n_k,
-                 uint64_t const n_w,
-                 uint64_t const n_bins,
-                 uint64_t const n_bits,
-                 uint64_t const n_hash,
-                 bool const gz,
-                 bool const bz2,
-                 bool precalculated)
+void run_program(cmd_arguments & args)
 {
-    seqan3::interleaved_bloom_filter<seqan3::data_layout::uncompressed>  ibf{seqan3::bin_count{n_bins},
-                                         seqan3::bin_size{n_bits},
-                                         seqan3::hash_function_count{n_hash}};
+    seqan3::interleaved_bloom_filter ibf{seqan3::bin_count{args.bins},
+                                         seqan3::bin_size{args.bits},
+                                         seqan3::hash_function_count{args.hash}};
 
     std::string extension{".fasta"};
-    if (gz)
+    if (args.gz)
         extension += ".gz";
-    if (bz2)
+    if (args.bz2)
         extension += ".bz2";
 
-    if (precalculated)
-        fill_ibf(ibf, dir_path);
+    if (args.precalculated)
+        fill_ibf(ibf, args.bin_path);
     else
-        fill_ibf(ibf, dir_path, n_k, n_w, n_bins, extension);
+        fill_ibf(ibf, args.bin_path, args.k, args.w, extension);
 
-    std::ofstream os{out_path, std::ios::binary};
+    if (args.out_path.string() == "./")
+        args.out_path = std::filesystem::path{"./out.ibf"};
+
+    std::ofstream os{args.out_path, std::ios::binary};
     cereal::BinaryOutputArchive oarchive{os};
     oarchive(ibf);
 }
@@ -108,7 +118,7 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
 
     minimizer mini{window{n_w}, kmer{n_k}};
 
-    for(auto & file: in_paths)
+    for (auto & file : in_paths)
     {
         seqan3::sequence_file_input<my_traits, seqan3::fields<seqan3::field::seq>> fin{file};
 
@@ -116,13 +126,13 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
         {
             mini.compute(seq);
             for (auto && hash : mini.minimizer_hash)
-                hash_table[hash] = std::min<uint8_t>(126u, hash_table[hash]+1);
+                hash_table[hash] = std::min<uint8_t>(126u, hash_table[hash] + 1);
         }
 
-        filesize = std::filesystem::file_size(file);
-        filesize = filesize + filesize; // Filesize multiplied by two, because Mantis based on fastq files, we use fasta files
+        // Filesize multiplied by two, because Mantis based on fastq files, we use fasta files
+        filesize = std::filesystem::file_size(file) * 2;
 
-        for(unsigned k = 0; k < cutoff_bounds.size(); ++k)
+        for (size_t k = 0; k < cutoff_bounds.size(); ++k)
         {
             if (filesize <= cutoff_bounds[k])
             {
@@ -132,21 +142,18 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
         }
 
         outfile.open(std::string(out_path) + std::string(file.stem()) + ".minimizer", std::ios::binary);
+        for (auto & hash : hash_table)
         {
-            for (auto & hash : hash_table)
+            if (hash.second > cutoff)
             {
-                if (hash.second > cutoff)
-                {
-                    outfile.write((char*) & hash.first, sizeof(hash.first));
-                    ++count;
-                }
-
+                outfile.write(reinterpret_cast<const char*>(&hash.first), sizeof(hash.first));
+                ++count;
             }
         }
         outfile.close();
 
         headerfile.open(std::string(out_path) + std::string(file.stem()) + ".header");
-        headerfile << (uint64_t) n_k << "\t" << n_w << "\t" << cutoff << "\t" << count << "\n";
+        headerfile << static_cast<uint64_t>(n_k) << "\t" << n_w << "\t" << cutoff << "\t" << count << "\n";
         headerfile.close();
         count = 0;
         cutoff = 50;
@@ -154,29 +161,14 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
     }
 }
 
-struct cmd_arguments
-{
-    std::vector<std::filesystem::path> bin_path{};
-    std::filesystem::path out_path{"./"};
-    uint64_t w{23};
-    uint8_t k{20};
-    uint64_t bins{64};
-    uint64_t bits{4096};
-    uint64_t hash{2};
-    bool gz{false};
-    bool bz2{false};
-    bool binary{false};
-    bool precalculated{false};
-};
-
 void initialize_argument_parser(seqan3::argument_parser & parser, cmd_arguments & args)
 {
     parser.info.author = "Enrico Seiler";
     parser.info.author = "enrico.seiler@fu-berlin.de";
     parser.info.short_description = "Build an IBF using minimizers.";
     parser.info.version = "1.0.0";
-    parser.add_positional_option(args.bin_path, "Please provide one path to a directory containing one FASTA file for "
-                                                "each bin. Or provide a list of binary minimizer files as outputed by "
+    parser.add_positional_option(args.bin_path, "Please provide a path to a directory containing one FASTA file for "
+                                                "each bin. Or provide a list of binary minimizer files as output by "
                                                 "build_min_ibf --binary.");
     parser.add_option(args.out_path, 'o', "out", "Please provide a valid output path.", seqan3::option_spec::DEFAULT);
     parser.add_option(args.w, '\0', "window", "Choose the window size.", seqan3::option_spec::DEFAULT,
@@ -191,8 +183,8 @@ void initialize_argument_parser(seqan3::argument_parser & parser, cmd_arguments 
                       seqan3::arithmetic_range_validator{1, 4});
     parser.add_flag(args.gz, '\0', "gz", "Expect FASTA files to be gz compressed.");
     parser.add_flag(args.bz2, '\0', "bz2", "Expect FASTA files to be bz2 compressed.");
-    parser.add_flag(args.binary, '\0', "binary", "Set to true when not IBF should be build but only binary minimizer files.");
-    parser.add_flag(args.precalculated, '\0', "pre", "Set to true when precalculated binary minimizer files are used.");
+    parser.add_flag(args.binary, '\0', "binary", "Only precompute minimizers. Does not create the IBF.");
+    parser.add_flag(args.precalculated, '\0', "pre", "Use precomputed minimizers to create IBF.");
 }
 
 int main(int argc, char ** argv)
@@ -222,7 +214,6 @@ int main(int argc, char ** argv)
     if (args.k > args.w)
         throw seqan3::argument_parser_error{"The kmer size cannot be bigger than the window size."};
 
-    run_program(args.bin_path, args.out_path, args.k, args.w, args.bins, args.bits, args.hash, args.gz, args.bz2,
-                args.precalculated);
+    run_program(args);
     return 0;
 }
