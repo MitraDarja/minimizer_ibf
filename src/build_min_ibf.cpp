@@ -115,7 +115,7 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
     // Cutoffs and bounds from Mantis
     // Mantis ignores k-mers which appear less than a certain cutoff. The cutoff is based on the file size of a
     // fastq gzipped file. So small files have only a cutoff of 1, while big files have a cutoff value of 50.
-    std::vector<int> cutoffs{1,3,10,20};
+    std::vector<uint16_t> cutoffs{1,3,10,20};
     std::vector<uint64_t> cutoff_bounds{314572800, 524288000, 1073741824, 3221225472};
 
     minimizer mini{window{n_w}, kmer{n_k}};
@@ -131,7 +131,7 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
                 // The hash table stores how often a minimizer appears. It does not matter if a minimizer appears
                 // 50 times or 2000 times, it is stored regardless because the biggest cutoff value is 50, therefore
                 // the hash table stores only values up until 126 to save memory.
-                hash_table[hash] = std::min<uint8_t>(126u, hash_table[hash] + 1);
+                hash_table[hash] = std::min<uint8_t>(254u, hash_table[hash] + 1);
         }
 
         // The filesize is multiplied by two, because Mantis' filesize is based on fastq files, while we use fasta files,
