@@ -130,7 +130,7 @@ void get_minimizer_files(std::vector<std::filesystem::path> const & in_paths,
             for (auto && hash : mini.minimizer_hash)
                 // The hash table stores how often a minimizer appears. It does not matter if a minimizer appears
                 // 50 times or 2000 times, it is stored regardless because the biggest cutoff value is 50, therefore
-                // the hash table stores only values up until 126 to save memory.
+                // the hash table stores only values up until 254 to save memory.
                 hash_table[hash] = std::min<uint8_t>(254u, hash_table[hash] + 1);
         }
 
