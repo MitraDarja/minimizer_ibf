@@ -84,5 +84,9 @@ include_directories("${CMAKE_SOURCE_DIR}/include/")
 add_executable(build_min_ibf src/build_min_ibf.cpp)
 target_link_libraries(build_min_ibf seqan3::seqan3)
 
+add_executable(compress_min_ibf src/compress_min_ibf.cpp)
+target_link_libraries(compress_min_ibf seqan3::seqan3)
+
+
 add_executable(search_min_ibf src/search_min_ibf.cpp)
 target_link_libraries(search_min_ibf seqan3::seqan3)
